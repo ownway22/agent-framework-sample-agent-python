@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""
+步驟 1: 驗證 az 與 a365 CLI 環境。
+步驟 2: 優先嘗試重用既有 blueprint。
+步驟 3: 必要時再執行 a365 setup all。
+"""
+
 import argparse
 import os
 from pathlib import Path
@@ -19,6 +25,7 @@ from _common import (
 )
 
 
+# 步驟 1: 收斂本腳本會用到的命令列參數。
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run Agent 365 blueprint setup using the a365 CLI."
@@ -47,6 +54,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# 步驟 2: 若租戶內已經有對應 blueprint，就直接回填 generated config。
 def try_existing_blueprint_fallback(config: dict[str, object]) -> bool:
     blueprint_id = str(
         os.getenv("AGENT_BLUEPRINT_ID")
@@ -93,6 +101,7 @@ def try_existing_blueprint_fallback(config: dict[str, object]) -> bool:
     return True
 
 
+# 步驟 3: 將 az CLI 回傳字串安全轉成 JSON。
 def load_json_from_text(raw: str) -> dict[str, object]:
     import json
 
@@ -110,6 +119,7 @@ def main() -> int:
     print_header("Step 3 - Setup agent blueprint")
 
     try:
+        # 步驟 4: 先確認必要 CLI 存在，缺一個就直接停止。
         require_command("az", "https://learn.microsoft.com/cli/azure/install-azure-cli")
         require_command("a365", "https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli")
     except RuntimeError as exc:
@@ -120,6 +130,7 @@ def main() -> int:
             f"Missing config file: {args.config}. Run publishAgent/02_setup-a365-config.py first."
         )
 
+    # 步驟 5: 先跑 requirements，提早看到權限與安裝問題。
     print_step("Running prerequisite validation via a365 setup requirements.")
     requirements = run_command(["a365", "setup", "requirements"], cwd=args.config.parent)
     if requirements.returncode != 0:
@@ -131,12 +142,14 @@ def main() -> int:
     if not detect_az_login():
         return fail("Azure CLI is not logged in. Run 'az login' and retry.")
 
+    # 步驟 6: 有既有 blueprint 時，直接重用可大幅減少互動與權限問題。
     if os.getenv("AGENT_BLUEPRINT_ID") and try_existing_blueprint_fallback(config):
         print_step(
             "Using the existing tenant blueprint referenced by AGENT_BLUEPRINT_ID; skipping a365 setup all."
         )
         return 0
 
+    # 步驟 7: 找不到可重用 blueprint 時，才執行正式 setup 流程。
     command = ["a365", "setup", "all", "--config", str(args.config)]
     if not args.with_infrastructure:
         command.append("--skip-infrastructure")
@@ -156,6 +169,7 @@ def main() -> int:
             result.returncode,
         )
 
+    # 步驟 8: 最後確認 generated config 是否真的產生。
     generated = generated_config_path()
     if generated.exists():
         print_step(f"Generated Agent 365 config is available: {generated}")

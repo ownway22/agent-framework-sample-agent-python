@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""
+步驟 1: 啟動本機 Agent Host。
+步驟 2: 視需要啟動 Microsoft 365 Agents Playground。
+步驟 3: 持續監看兩個程序，直到使用者手動停止。
+"""
+
 import argparse
 import os
 import signal
@@ -18,6 +24,7 @@ from _common import (
 )
 
 
+# 步驟 1: 先整理命令列參數，讓後續流程清楚可控。
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Start the sample agent and Microsoft 365 Agents Playground locally."
@@ -42,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# 步驟 2: 統一關閉程序邏輯，避免遺留背景程序。
 def terminate_process(process: subprocess.Popen[str] | None) -> None:
     if process is None or process.poll() is not None:
         return
@@ -54,6 +62,7 @@ def terminate_process(process: subprocess.Popen[str] | None) -> None:
         process.wait(timeout=5)
 
 
+    # 步驟 3: 優先使用本機 Playground binary，不相容時再退回 npx。
 def start_playground(
     *,
     root: str,
@@ -114,6 +123,7 @@ def main() -> int:
     print_header("Step 1 - Build and run agent locally")
 
     try:
+        # 步驟 4: 先檢查必要工具與埠號，避免啟動後才發現衝突。
         require_command("uv", "https://docs.astral.sh/uv/getting-started/installation/")
         if not playground_binary.exists():
             return fail(f"Agents Playground binary not found: {playground_binary}")
@@ -132,6 +142,7 @@ def main() -> int:
         env = os.environ.copy()
         env["PORT"] = str(args.agent_port)
 
+        # 步驟 5: 啟動本機 Agent Host，並等待健康檢查成功。
         print_step("Starting the local Agent 365 host on port 3978.")
         host_process = subprocess.Popen(
             ["uv", "run", "python", "start_with_generic_host.py"],
@@ -151,6 +162,7 @@ def main() -> int:
         print_step(f"Agent host is healthy: {agent_health_url}")
 
         if not args.skip_playground:
+            # 步驟 6: Host 正常後再啟動 Playground，避免 UI 先連到壞掉端點。
             endpoint = f"http://localhost:{args.agent_port}/api/messages"
             print_step("Starting Microsoft 365 Agents Playground on port 56150.")
             playground_process = start_playground(
@@ -177,6 +189,7 @@ def main() -> int:
             print(f"- Playground UI: http://localhost:{args.playground_port}")
         print("Press Ctrl+C to stop both processes.")
 
+        # 步驟 7: 持續監看程序，只要任一程序異常結束就立刻回報。
         while True:
             if host_process.poll() is not None:
                 return fail("The local agent host exited unexpectedly.")
@@ -187,6 +200,7 @@ def main() -> int:
         print_step("Stopping local processes.")
         return 0
     finally:
+        # 步驟 8: 不論成功或失敗，都確保背景程序被清乾淨。
         terminate_process(playground_process)
         terminate_process(host_process)
 

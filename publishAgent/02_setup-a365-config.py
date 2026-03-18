@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""
+步驟 1: 讀取既有設定與 .env 預設值。
+步驟 2: 補齊 Agent 365 所需欄位。
+步驟 3: 寫回 a365.config.json，作為後續流程輸入。
+"""
+
 import argparse
 import json
 from pathlib import Path
@@ -19,6 +25,7 @@ from _common import (
 )
 
 
+# 步驟 1: 只保留本腳本真正需要的參數。
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Create or update a365.config.json for this repo."
@@ -32,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# 步驟 2: 從 manifest template 嘗試帶出現有 client app id。
 def load_manifest_client_app_id() -> str | None:
     template_path = repo_root() / "manifest-template.json"
     if not template_path.exists():
@@ -55,8 +63,10 @@ def main() -> int:
 
     print_header("Step 2 - Setup Agent 365 config")
 
+    # 步驟 3: 先讀舊設定，讓重新執行時可以沿用既有值。
     existing = load_json(args.config)
 
+    # 步驟 4: 逐一蒐集 Agent 365 所需欄位，缺值時才詢問使用者。
     tenant_id = prompt_value(
         ["A365_TENANT_ID", "TENANT_ID", "AZURE_TENANT_ID"],
         "Tenant ID",
@@ -176,6 +186,7 @@ def main() -> int:
     )
     need_deployment = bool_from_env(["A365_NEED_DEPLOYMENT", "NEED_DEPLOYMENT"], False)
 
+    # 步驟 5: 以舊設定為基底更新欄位，避免覆蓋無關內容。
     payload = dict(existing)
     payload.update(
         {
@@ -204,6 +215,7 @@ def main() -> int:
         }
     )
 
+    # 步驟 6: 寫出設定檔，提供後續 setup 與 publish 使用。
     args.config.parent.mkdir(parents=True, exist_ok=True)
     write_json(args.config, payload)
 

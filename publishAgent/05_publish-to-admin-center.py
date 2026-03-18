@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+"""
+步驟 1: 整理 manifest 內容與圖示檔案。
+步驟 2: 每次自動提升 manifest 版本號。
+步驟 3: 在 headless Linux 直接封裝 manifest.zip，不呼叫互動式 a365 publish。
+"""
+
 import argparse
+import copy
 import json
 import os
 import shutil
+import zipfile
+from datetime import date, datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from _common import (
     config_path,
-    env_file_path,
     fail,
     generated_config_path,
     load_json,
@@ -16,12 +25,16 @@ from _common import (
     manifest_dir,
     print_header,
     print_step,
-    require_command,
     repo_root,
-    run_command,
 )
 
 
+ICON_FILE_NAME = "boy.png"
+DEFAULT_VERSION = "1.0.1"
+VERSION_EPOCH = date(2025, 1, 1)
+
+
+# 步驟 1: 保留少量參數，讓腳本能用一般模式與 dry-run 模式共用。
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Package the agent for Microsoft 365 admin center upload."
@@ -45,6 +58,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# 步驟 2: 讀取 manifest template，作為每次產生 manifest 的基底。
 def _load_manifest_template() -> dict[str, object] | None:
     template_path = repo_root() / "manifest-template.json"
     if not template_path.exists():
@@ -52,6 +66,11 @@ def _load_manifest_template() -> dict[str, object] | None:
     return json.loads(template_path.read_text(encoding="utf-8"))
 
 
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+# 步驟 3: 從 generated config / config 中找出這次要寫入的 blueprint id。
 def _resolve_blueprint_id(config: dict[str, object], generated: dict[str, object]) -> str:
     candidates = [
         str(generated.get("agentBlueprintId") or "").strip(),
@@ -72,26 +91,137 @@ def _env_or_value(*keys: str, default: str = "") -> str:
     return default
 
 
-def ensure_manifest_assets(config: dict[str, object], generated: dict[str, object]) -> None:
+def _resolve_package_id(dry_run: bool) -> str:
+    configured = _env_or_value("A365_MANIFEST_PACKAGE_ID", "MANIFEST_PACKAGE_ID")
+    if configured:
+        return configured
+
+    # 步驟 5: 每次正式封裝都使用新的 package/title id，避免撞到已部署的舊 title。
+    return str(uuid4())
+
+
+def _parse_version(raw: object) -> tuple[int, int, int] | None:
+    if not isinstance(raw, str):
+        return None
+    parts = raw.strip().split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        return None
+    major, minor, patch = (int(part) for part in parts)
+    return major, minor, patch
+
+
+# 步驟 4: 用 UTC 日期與秒數產生時間序版本，避免落回遠端舊版本之下。
+def _time_ordered_version() -> tuple[int, int, int]:
+    now = datetime.now(timezone.utc)
+    days_since_epoch = (now.date() - VERSION_EPOCH).days
+    seconds_since_midnight = now.hour * 3600 + now.minute * 60 + now.second
+    return 1, days_since_epoch, seconds_since_midnight
+
+
+def _next_manifest_version(*raw_versions: object) -> str:
+    valid_versions = [parsed for raw in raw_versions if (parsed := _parse_version(raw))]
+    default_version = _parse_version(DEFAULT_VERSION)
+    assert default_version is not None
+
+    candidate = _time_ordered_version()
+    current = max(valid_versions + [default_version]) if valid_versions else default_version
+
+    if candidate > current:
+        major, minor, patch = candidate
+        return f"{major}.{minor}.{patch}"
+
+    major, minor, patch = current
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def _resolve_icon_source(target: Path) -> Path | None:
+    candidates = [
+        target / ICON_FILE_NAME,
+        repo_root() / "images" / ICON_FILE_NAME,
+        repo_root() / "images" / "agentframework-thumbnail.png",
+        repo_root() / "images" / "thumbnail.png",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _persist_template_settings(
+    template_payload: dict[str, object],
+    package_id: str,
+    version: str,
+    dry_run: bool,
+) -> None:
+    template_payload["id"] = package_id
+    template_payload["version"] = version
+    template_payload.setdefault("icons", {})
+    template_payload["icons"]["color"] = ICON_FILE_NAME
+    template_payload["icons"]["outline"] = ICON_FILE_NAME
+    if not dry_run:
+        _write_json(repo_root() / "manifest-template.json", template_payload)
+
+
+def _package_manifest_zip(payload: dict[str, object], dry_run: bool) -> list[str]:
+    target = manifest_dir()
+    zip_path = target / "manifest.zip"
+    icon_files = {
+        str(value)
+        for value in payload.get("icons", {}).values()
+        if isinstance(value, str) and value.strip()
+    }
+    package_members = ["manifest.json"]
+    if (target / "agenticUserTemplateManifest.json").exists():
+        package_members.append("agenticUserTemplateManifest.json")
+    package_members.extend(sorted(icon_files))
+
+    if dry_run:
+        return package_members
+
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for member in package_members:
+            archive.write(target / member, arcname=member)
+    return package_members
+
+
+def ensure_manifest_assets(
+    config: dict[str, object],
+    generated: dict[str, object],
+    *,
+    dry_run: bool,
+) -> dict[str, object]:
     target = manifest_dir()
     target.mkdir(parents=True, exist_ok=True)
 
-    color_icon = target / "color.png"
-    outline_icon = target / "outline.png"
-    preferred_icon = repo_root() / "images" / "agentframework-thumbnail.png"
-    fallback_icon = repo_root() / "images" / "thumbnail.png"
-    icon_source = preferred_icon if preferred_icon.exists() else fallback_icon
-
-    if icon_source.exists():
-        shutil.copyfile(icon_source, color_icon)
-        shutil.copyfile(icon_source, outline_icon)
-
     manifest_path = target / "manifest.json"
-    payload = _load_manifest_template() or load_json(manifest_path)
+    template_payload = _load_manifest_template()
+    existing_manifest = load_json(manifest_path)
+    payload = copy.deepcopy(template_payload) if template_payload else load_json(manifest_path)
     if not payload:
         raise RuntimeError(
             "manifest-template.json is missing and there is no existing manifest/manifest.json to publish."
         )
+
+    package_id = _resolve_package_id(dry_run)
+    next_version = _next_manifest_version(
+        template_payload.get("version") if template_payload else None,
+        existing_manifest.get("version"),
+    )
+    if template_payload:
+        _persist_template_settings(template_payload, package_id, next_version, dry_run)
+
+    icon_source = _resolve_icon_source(target)
+    if icon_source is None:
+        raise RuntimeError("Could not find an icon source for boy.png.")
+
+    icon_target = target / ICON_FILE_NAME
+    if not dry_run:
+        if icon_source.resolve() != icon_target.resolve():
+            shutil.copyfile(icon_source, icon_target)
+        for stale_name in ("color.png", "outline.png"):
+            stale_path = target / stale_name
+            if stale_path.exists():
+                stale_path.unlink()
 
     blueprint_id = _resolve_blueprint_id(config, generated)
     app_name = str(
@@ -113,7 +243,8 @@ def ensure_manifest_assets(config: dict[str, object], generated: dict[str, objec
         ),
     )
 
-    payload["id"] = blueprint_id
+    payload["version"] = next_version
+    payload["id"] = package_id
     developer = payload.setdefault("developer", {})
     payload.setdefault("name", {})
     payload.setdefault("description", {})
@@ -147,8 +278,8 @@ def ensure_manifest_assets(config: dict[str, object], generated: dict[str, objec
             or "https://learn.microsoft.com/en-us/legal/ai-code-of-conduct"
         ).strip(),
     )
-    payload["icons"]["color"] = "color.png"
-    payload["icons"]["outline"] = "outline.png"
+    payload["icons"]["color"] = ICON_FILE_NAME
+    payload["icons"]["outline"] = ICON_FILE_NAME
     payload["name"]["full"] = app_name
     payload["name"]["short"] = app_name[:30]
     payload["description"]["short"] = short_description
@@ -167,19 +298,19 @@ def ensure_manifest_assets(config: dict[str, object], generated: dict[str, objec
     if custom_engine_agents:
         custom_engine_agents[0]["id"] = blueprint_id
 
-    manifest_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if not dry_run:
+        _write_json(manifest_path, payload)
 
     agentic_template_path = target / "agenticUserTemplateManifest.json"
-    if not agentic_template_path.exists():
-        template_payload = {
-            "id": blueprint_id,
+    agentic_payload = {
+            "id": package_id,
             "name": app_name,
             "description": short_description,
         }
-        agentic_template_path.write_text(
-            json.dumps(template_payload, indent=2) + "\n",
-            encoding="utf-8",
-        )
+    if not dry_run:
+        _write_json(agentic_template_path, agentic_payload)
+
+    return payload
 
 
 def main() -> int:
@@ -187,11 +318,6 @@ def main() -> int:
     load_env_file()
 
     print_header("Step 5 - Publish to Microsoft 365 admin center")
-
-    try:
-        require_command("a365", "https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli")
-    except RuntimeError as exc:
-        return fail(str(exc))
 
     if not args.config.exists():
         return fail(
@@ -204,24 +330,21 @@ def main() -> int:
 
     config = load_json(args.config)
     generated = load_json(generated_config_path())
-    ensure_manifest_assets(config, generated)
-    print_step(f"Manifest assets prepared in {manifest_dir()}")
+    
+    # 步驟 4: 直接在本機產生 manifest 與 zip，避免 headless Linux 卡在互動式流程。
+    payload = ensure_manifest_assets(config, generated, dry_run=args.dry_run)
+    package_members = _package_manifest_zip(payload, dry_run=args.dry_run)
 
-    command = ["a365", "publish"]
-    if args.verbose:
-        command.append("--verbose")
+    print_step(f"Manifest package ID prepared: {payload['id']}")
+    print_step(f"Manifest version prepared: {payload['version']}")
+    print_step(f"Manifest icons unified to: {ICON_FILE_NAME}")
     if args.dry_run:
-        command.append("--dry-run")
+        print_step(f"Dry run package members: {', '.join(package_members)}")
+        print_step("Dry run completed. No files were written.")
+        return 0
 
-    print_step("Running the Agent 365 publish command.")
-    result = run_command(command, cwd=repo_root())
-    if result.returncode != 0:
-        return fail(
-            "a365 publish failed. Review the CLI output above and adjust manifest metadata if needed.",
-            result.returncode,
-        )
-
-    print_step("a365 publish completed.")
+    print_step(f"Manifest assets prepared in {manifest_dir()}")
+    print_step(f"Non-interactive package created: {manifest_dir() / 'manifest.zip'}")
     print_step("Next manual step in Microsoft 365 admin center:")
     print_step("1. Open https://admin.microsoft.com/")
     print_step("2. Go to Agents > All agents > Upload custom agent")

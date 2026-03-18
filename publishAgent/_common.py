@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""
+publishAgent 共用工具。
+
+步驟 1: 提供路徑、輸出與命令執行等基礎工具。
+步驟 2: 集中處理環境變數、JSON 與簡單驗證。
+步驟 3: 讓各腳本可以專心描述流程，不必重複寫樣板程式。
+"""
+
 import json
 import os
 import re
@@ -19,6 +27,7 @@ GUID_RE = re.compile(
 )
 
 
+# 步驟 1: 統一路徑來源，避免各腳本自己拼接目錄。
 def script_dir() -> Path:
     return Path(__file__).resolve().parent
 
@@ -43,6 +52,7 @@ def manifest_dir() -> Path:
     return repo_root() / "manifest"
 
 
+# 步驟 2: 提供一致的終端輸出格式，讓初學者容易追流程。
 def print_header(title: str) -> None:
     line = "=" * 80
     print(line)
@@ -59,6 +69,7 @@ def fail(message: str, exit_code: int = 1) -> int:
     return exit_code
 
 
+# 步驟 3: 封裝命令檢查與執行，減少重複樣板。
 def command_exists(command: str) -> bool:
     return shutil.which(command) is not None
 
@@ -98,6 +109,7 @@ def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+# 步驟 4: 將常用資料處理集中管理。
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 
@@ -129,6 +141,7 @@ def wait_for_http(url: str, timeout_seconds: int = 60) -> bool:
     return False
 
 
+# 步驟 5: 先讀環境變數，再視需要進入互動式輸入。
 def prompt_value(
     env_keys: list[str],
     prompt_text: str,
@@ -167,6 +180,7 @@ def prompt_value(
         return value
 
 
+# 步驟 6: 載入 .env 供所有 publishAgent 腳本共用。
 def load_env_file(path: Path | None = None) -> None:
     target = path or env_file_path()
     if not target.exists():
@@ -198,6 +212,7 @@ def bool_from_env(env_keys: list[str], default: bool) -> bool:
     return default
 
 
+# 步驟 7: 快速確認 CLI 登入狀態，避免執行到一半才失敗。
 def detect_az_login() -> bool:
     if not command_exists("az"):
         return False
