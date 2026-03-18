@@ -48,6 +48,14 @@ def generated_config_path() -> Path:
     return repo_root() / "a365.generated.config.json"
 
 
+def blueprint_metadata_path() -> Path:
+    return repo_root() / "agent-blueprint.metadata.json"
+
+
+def blueprint_metadata_template_path() -> Path:
+    return repo_root() / "agent-blueprint.metadata.template.json"
+
+
 def manifest_dir() -> Path:
     return repo_root() / "manifest"
 

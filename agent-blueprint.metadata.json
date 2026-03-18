@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "1.0",
+  "completed": true,
+  "validationStatus": "passed",
+  "validationErrors": [],
+  "identity": {
+    "agentBlueprintId": "a8596fc5-bd98-42e4-b6f2-1246406114c8",
+    "agentBlueprintObjectId": "a8596fc5-bd98-42e4-b6f2-1246406114c8",
+    "agentBlueprintServicePrincipalObjectId": "14d1f2df-b3a9-4fd0-a6b5-4a22f401a655",
+    "agentBlueprintDisplayName": "Workshop Agent Blueprint",
+    "clientAppId": "9af3f45c-e98b-49f4-ac87-c8be7d863154"
+  },
+  "environment": {
+    "tenantId": "7af14df6-4faa-44a1-a6af-31918fd33344",
+    "subscriptionId": "6e72eb31-abe0-472d-9638-c8cadf9d2bee",
+    "resourceGroup": "a365-workshop-rg",
+    "location": "westus",
+    "environment": "prod"
+  },
+  "runtime": {
+    "webAppName": "web-agent-framework-sample-agent-python-a365",
+    "appServicePlanName": "asp-agent-framework-sample-agent-python-a365",
+    "appServicePlanSku": "B1",
+    "botMessagingEndpoint": "https://web-agent-framework-sample-agent-python-a365.azurewebsites.net/api/messages",
+    "messagingEndpoint": "https://web-agent-framework-sample-agent-python-a365.azurewebsites.net/api/messages",
+    "webApplicationResource": "api://a8596fc5-bd98-42e4-b6f2-1246406114c8"
+  },
+  "agentProfile": {
+    "agentUserDisplayName": "A365-SDK-Agent",
+    "agentUserPrincipalName": "workshop-agent@M365CPI42620333.onmicrosoft.com",
+    "agentDescription": "agent framework sample agent python - Agent 365 Agent",
+    "managerEmail": "WillB@M365CPI42620333.OnMicrosoft.com"
+  },
+  "security": {
+    "clientSecretProtected": true,
+    "resourceConsents": []
+  },
+  "audit": {
+    "source": "existing-blueprint-fallback",
+    "createdAt": "2026-03-19T00:00:00Z",
+    "updatedAt": "2026-03-18T19:05:01Z",
+    "createdBy": "yuhonglin"
+  }
+}

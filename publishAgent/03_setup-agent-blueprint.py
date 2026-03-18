@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import argparse
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from _common import (
+    blueprint_metadata_path,
     config_path,
     detect_az_login,
     fail,
@@ -111,26 +113,134 @@ def load_json_from_text(raw: str) -> dict[str, object]:
         return {}
 
 
+# 步驟 4: 將 setup 結果整理成較完整的 blueprint metadata，方便交接與追查。
+def build_blueprint_metadata(
+    config: dict[str, object],
+    generated: dict[str, object],
+    *,
+    source: str,
+) -> dict[str, object]:
+    blueprint_id = str(generated.get("agentBlueprintId") or "").strip()
+    validation_errors: list[str] = []
+    required_fields = {
+        "agentBlueprintId": blueprint_id,
+        "agentBlueprintObjectId": str(generated.get("agentBlueprintObjectId") or "").strip(),
+        "agentBlueprintServicePrincipalObjectId": str(
+            generated.get("agentBlueprintServicePrincipalObjectId") or ""
+        ).strip(),
+        "tenantId": str(config.get("tenantId") or "").strip(),
+        "subscriptionId": str(config.get("subscriptionId") or "").strip(),
+        "resourceGroup": str(config.get("resourceGroup") or "").strip(),
+        "location": str(config.get("location") or "").strip(),
+        "botMessagingEndpoint": str(generated.get("botMessagingEndpoint") or "").strip(),
+    }
+    for field_name, field_value in required_fields.items():
+        if not field_value:
+            validation_errors.append(f"Missing required blueprint field: {field_name}")
+
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    existing_metadata = load_json(blueprint_metadata_path())
+    existing_audit = existing_metadata.get("audit") if isinstance(existing_metadata.get("audit"), dict) else {}
+
+    return {
+        "schemaVersion": "1.0",
+        "completed": bool(generated.get("completed")),
+        "validationStatus": "passed" if not validation_errors else "warning",
+        "validationErrors": validation_errors,
+        "identity": {
+            "agentBlueprintId": blueprint_id,
+            "agentBlueprintObjectId": str(generated.get("agentBlueprintObjectId") or "").strip(),
+            "agentBlueprintServicePrincipalObjectId": str(
+                generated.get("agentBlueprintServicePrincipalObjectId") or ""
+            ).strip(),
+            "agentBlueprintDisplayName": str(config.get("agentBlueprintDisplayName") or "").strip(),
+            "clientAppId": str(config.get("clientAppId") or "").strip(),
+        },
+        "environment": {
+            "tenantId": str(config.get("tenantId") or "").strip(),
+            "subscriptionId": str(config.get("subscriptionId") or "").strip(),
+            "resourceGroup": str(config.get("resourceGroup") or "").strip(),
+            "location": str(config.get("location") or "").strip(),
+            "environment": str(config.get("environment") or "").strip(),
+        },
+        "runtime": {
+            "webAppName": str(config.get("webAppName") or "").strip(),
+            "appServicePlanName": str(config.get("appServicePlanName") or "").strip(),
+            "appServicePlanSku": str(config.get("appServicePlanSku") or "").strip(),
+            "botMessagingEndpoint": str(generated.get("botMessagingEndpoint") or "").strip(),
+            "messagingEndpoint": str(config.get("messagingEndpoint") or config.get("botMessagingEndpoint") or "").strip(),
+            "webApplicationResource": f"api://{blueprint_id}" if blueprint_id else "",
+        },
+        "agentProfile": {
+            "agentUserDisplayName": str(config.get("agentUserDisplayName") or "").strip(),
+            "agentUserPrincipalName": str(config.get("agentUserPrincipalName") or "").strip(),
+            "agentDescription": str(config.get("agentDescription") or "").strip(),
+            "managerEmail": str(config.get("managerEmail") or "").strip(),
+        },
+        "security": {
+            "clientSecretProtected": bool(generated.get("agentBlueprintClientSecretProtected")),
+            "resourceConsents": generated.get("resourceConsents")
+            if isinstance(generated.get("resourceConsents"), list)
+            else [],
+        },
+        "audit": {
+            "source": source,
+            "createdAt": str(existing_audit.get("createdAt") or now),
+            "updatedAt": now,
+            "createdBy": os.getenv("USER", "unknown"),
+        },
+    }
+
+
+def write_blueprint_metadata(
+    config: dict[str, object],
+    generated: dict[str, object],
+    *,
+    source: str,
+) -> None:
+    metadata = build_blueprint_metadata(config, generated, source=source)
+    write_json(blueprint_metadata_path(), metadata)
+    print_step(f"Generated blueprint metadata is available: {blueprint_metadata_path()}")
+
+
 def main() -> int:
     args = parse_args()
     load_env_file()
-    config = load_json(args.config)
 
     print_header("Step 3 - Setup agent blueprint")
-
-    try:
-        # 步驟 4: 先確認必要 CLI 存在，缺一個就直接停止。
-        require_command("az", "https://learn.microsoft.com/cli/azure/install-azure-cli")
-        require_command("a365", "https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli")
-    except RuntimeError as exc:
-        return fail(str(exc))
 
     if not args.config.exists():
         return fail(
             f"Missing config file: {args.config}. Run publishAgent/02_setup-a365-config.py first."
         )
 
-    # 步驟 5: 先跑 requirements，提早看到權限與安裝問題。
+    config = load_json(args.config)
+
+    try:
+        # 步驟 4: fallback 與正式流程都會用到 Azure CLI，因此先只檢查 az。
+        require_command("az", "https://learn.microsoft.com/cli/azure/install-azure-cli")
+    except RuntimeError as exc:
+        return fail(str(exc))
+
+    # 步驟 5: 若已指定既有 blueprint，先嘗試直接重用，避免卡在耗時 requirements。
+    if os.getenv("AGENT_BLUEPRINT_ID"):
+        if not detect_az_login():
+            return fail("Azure CLI is not logged in. Run 'az login' and retry.")
+        if try_existing_blueprint_fallback(config):
+            generated = load_json(generated_config_path())
+            write_blueprint_metadata(config, generated, source="existing-blueprint-fallback")
+            print_step(
+                "Using the existing tenant blueprint referenced by AGENT_BLUEPRINT_ID; skipped a365 setup requirements and a365 setup all."
+            )
+            return 0
+
+    try:
+        # 步驟 6: 只有在 fallback 不可用時，才需要 a365 CLI 進入正式 setup。
+        require_command("a365", "https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli")
+    except RuntimeError as exc:
+        return fail(str(exc))
+
+    # 步驟 7: 先跑 requirements，提早看到權限與安裝問題。
     print_step("Running prerequisite validation via a365 setup requirements.")
     requirements = run_command(["a365", "setup", "requirements"], cwd=args.config.parent)
     if requirements.returncode != 0:
@@ -142,14 +252,16 @@ def main() -> int:
     if not detect_az_login():
         return fail("Azure CLI is not logged in. Run 'az login' and retry.")
 
-    # 步驟 6: 有既有 blueprint 時，直接重用可大幅減少互動與權限問題。
+    # 步驟 8: 若 requirements 通過後才判定可重用 blueprint，仍可直接使用。
     if os.getenv("AGENT_BLUEPRINT_ID") and try_existing_blueprint_fallback(config):
+        generated = load_json(generated_config_path())
+        write_blueprint_metadata(config, generated, source="existing-blueprint-fallback")
         print_step(
             "Using the existing tenant blueprint referenced by AGENT_BLUEPRINT_ID; skipping a365 setup all."
         )
         return 0
 
-    # 步驟 7: 找不到可重用 blueprint 時，才執行正式 setup 流程。
+    # 步驟 9: 找不到可重用 blueprint 時，才執行正式 setup 流程。
     command = ["a365", "setup", "all", "--config", str(args.config)]
     if not args.with_infrastructure:
         command.append("--skip-infrastructure")
@@ -169,9 +281,10 @@ def main() -> int:
             result.returncode,
         )
 
-    # 步驟 8: 最後確認 generated config 是否真的產生。
+    # 步驟 10: 最後確認 generated config 是否真的產生。
     generated = generated_config_path()
     if generated.exists():
+        write_blueprint_metadata(config, load_json(generated), source="a365-setup-all")
         print_step(f"Generated Agent 365 config is available: {generated}")
     else:
         print_step(

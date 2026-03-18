@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "1.0",
+  "completed": false,
+  "validationStatus": "pending",
+  "validationErrors": [],
+  "identity": {
+    "agentBlueprintId": "<agent-blueprint-client-id>",
+    "agentBlueprintObjectId": "<agent-blueprint-object-id>",
+    "agentBlueprintServicePrincipalObjectId": "<service-principal-object-id>",
+    "agentBlueprintDisplayName": "<agent-blueprint-display-name>",
+    "clientAppId": "<client-app-id>"
+  },
+  "environment": {
+    "tenantId": "<tenant-id>",
+    "subscriptionId": "<subscription-id>",
+    "resourceGroup": "<resource-group>",
+    "location": "<azure-location>",
+    "environment": "<dev-test-prod>"
+  },
+  "runtime": {
+    "webAppName": "<web-app-name>",
+    "appServicePlanName": "<app-service-plan-name>",
+    "appServicePlanSku": "<sku>",
+    "botMessagingEndpoint": "<bot-messaging-endpoint>",
+    "messagingEndpoint": "<messaging-endpoint>",
+    "webApplicationResource": "api://<agent-blueprint-client-id>"
+  },
+  "agentProfile": {
+    "agentUserDisplayName": "<agent-display-name>",
+    "agentUserPrincipalName": "<agent-upn>",
+    "agentDescription": "<agent-description>",
+    "managerEmail": "<manager-email>"
+  },
+  "security": {
+    "clientSecretProtected": false,
+    "resourceConsents": []
+  },
+  "audit": {
+    "source": "<a365-setup-all|existing-blueprint-fallback>",
+    "createdAt": "<iso-8601-timestamp>",
+    "updatedAt": "<iso-8601-timestamp>",
+    "createdBy": "<local-user-or-automation>"
+  }
+}
