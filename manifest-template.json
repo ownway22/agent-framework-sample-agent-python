@@ -1,0 +1,54 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.22/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.22",
+  "version": "1.0.1",
+  "id": "7ca88a69-5488-4e2b-b2ac-4d3f4ff21d20",
+  "developer": {
+    "name": "Frank Lin",
+    "websiteUrl": "https://www.linkedin.com/in/yu-hong-frank-lin-97764856/",
+    "privacyUrl": "https://www.microsoft.com/en-us/privacy/privacystatement",
+    "termsOfUseUrl": "https://learn.microsoft.com/en-us/legal/ai-code-of-conduct"
+  },
+  "name": {
+    "short": "A365-SDK-Agent",
+    "full": "A365-SDK-Agent"
+  },
+  "description": {
+    "short": "Python sample agent built with Agent Framework and Microsoft Agent 365 SDK.",
+    "full": "A365-SDK-Agent is a Python sample agent built with Agent Framework and the Microsoft Agent 365 SDK. It demonstrates observability, notifications, MCP tool integration, and Microsoft 365 agent hosting patterns."
+  },
+  "icons": {
+    "color": "default-color-icon.png",
+    "outline": "default-outline-icon.png"
+  },
+  "accentColor": "#4464ee",
+  "validDomains": [],
+  "webApplicationInfo": {
+    "id": "7ca88a69-5488-4e2b-b2ac-4d3f4ff21d20",
+    "resource": "api://example.com"
+  },
+  "bots": [
+    {
+      "botId": "7ca88a69-5488-4e2b-b2ac-4d3f4ff21d20",
+      "scopes": [
+        "personal",
+        "team",
+        "groupChat",
+        "copilot"
+      ],
+      "supportsFiles": true,
+      "isNotificationOnly": false
+    }
+  ],
+  "copilotAgents": {
+    "customEngineAgents": [
+      {
+        "id": "7ca88a69-5488-4e2b-b2ac-4d3f4ff21d20",
+        "type": "bot",
+        "disclaimer": {
+          "text": "This agent uses AI. Please verify important information."
+        }
+      }
+    ]
+  }
+}

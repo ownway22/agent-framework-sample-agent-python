@@ -1,0 +1,22 @@
+{
+  "tenantId": "7af14df6-4faa-44a1-a6af-31918fd33344",
+  "subscriptionId": "6e72eb31-abe0-472d-9638-c8cadf9d2bee",
+  "resourceGroup": "a365-workshop-rg",
+  "location": "westus",
+  "environment": "prod",
+  "needDeployment": false,
+  "clientAppId": "9af3f45c-e98b-49f4-ac87-c8be7d863154",
+  "appServicePlanName": "asp-agent-framework-sample-agent-python-a365",
+  "appServicePlanSku": "B1",
+  "webAppName": "web-agent-framework-sample-agent-python-a365",
+  "agentIdentityDisplayName": "A365-SDK-Agent Identity",
+  "agentBlueprintDisplayName": "Workshop Agent Blueprint",
+  "agentUserPrincipalName": "workshop-agent@M365CPI42620333.onmicrosoft.com",
+  "agentUserDisplayName": "A365-SDK-Agent",
+  "managerEmail": "WillB@M365CPI42620333.OnMicrosoft.com",
+  "agentUserUsageLocation": "US",
+  "deploymentProjectPath": "/home/yuhonglin/repo-frank/agent-framework-sample-agent-python",
+  "agentDescription": "agent framework sample agent python - Agent 365 Agent",
+  "botMessagingEndpoint": "https://web-agent-framework-sample-agent-python-a365.azurewebsites.net/api/messages",
+  "messagingEndpoint": "https://web-agent-framework-sample-agent-python-a365.azurewebsites.net/api/messages"
+}
