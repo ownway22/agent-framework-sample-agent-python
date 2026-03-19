@@ -8,7 +8,10 @@ __pycache__/
 .env
 a365.generated.config.json
 manifest/manifest.zip
+manifest/agent-blueprint.metadata.json
 agentsplayground.zip
+.cache/
+*.tgz
 
 .env-tmp
 devTools/*.log

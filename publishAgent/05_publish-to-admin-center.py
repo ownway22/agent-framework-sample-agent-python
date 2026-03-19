@@ -1,22 +1,24 @@
-from __future__ import annotations
-
 """
 步驟 1: 整理 manifest 內容與圖示檔案。
 步驟 2: 每次自動提升 manifest 版本號。
 步驟 3: 在 headless Linux 直接封裝 manifest.zip，不呼叫互動式 a365 publish。
 """
 
+from __future__ import annotations
+
 import argparse
 import copy
 import json
 import os
-import shutil
+import struct
 import zipfile
 from datetime import date, datetime, timezone
 from pathlib import Path
 from uuid import uuid4
+import zlib
 
 from _common import (
+    blueprint_metadata_path,
     config_path,
     fail,
     generated_config_path,
@@ -29,7 +31,8 @@ from _common import (
 )
 
 
-ICON_FILE_NAME = "boy.png"
+COLOR_ICON_FILE_NAME = "color.png"
+OUTLINE_ICON_FILE_NAME = "outline.png"
 DEFAULT_VERSION = "1.0.1"
 VERSION_EPOCH = date(2025, 1, 1)
 
@@ -70,9 +73,27 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-# 步驟 3: 從 generated config / config 中找出這次要寫入的 blueprint id。
-def _resolve_blueprint_id(config: dict[str, object], generated: dict[str, object]) -> str:
+def _load_blueprint_metadata() -> dict[str, object]:
+    return load_json(blueprint_metadata_path())
+
+
+def _read_nested(payload: dict[str, object], *keys: str) -> str:
+    current: object = payload
+    for key in keys:
+        if not isinstance(current, dict):
+            return ""
+        current = current.get(key)
+    return str(current or "").strip()
+
+
+# 步驟 3: 從 metadata / generated config / config 中找出這次要寫入的 blueprint id。
+def _resolve_blueprint_id(
+    config: dict[str, object],
+    generated: dict[str, object],
+    metadata: dict[str, object],
+) -> str:
     candidates = [
+        _read_nested(metadata, "identity", "agentBlueprintId"),
         str(generated.get("agentBlueprintId") or "").strip(),
         str(config.get("clientAppId") or "").strip(),
         str(config.get("agentBlueprintId") or "").strip(),
@@ -134,17 +155,100 @@ def _next_manifest_version(*raw_versions: object) -> str:
     return f"{major}.{minor}.{patch + 1}"
 
 
-def _resolve_icon_source(target: Path) -> Path | None:
-    candidates = [
-        target / ICON_FILE_NAME,
-        repo_root() / "images" / ICON_FILE_NAME,
-        repo_root() / "images" / "agentframework-thumbnail.png",
-        repo_root() / "images" / "thumbnail.png",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
+def _png_chunk(kind: bytes, payload: bytes) -> bytes:
+    return (
+        struct.pack(">I", len(payload))
+        + kind
+        + payload
+        + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+    )
+
+
+def _write_rgba_png(path: Path, width: int, height: int, rows: list[bytes]) -> None:
+    signature = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    scanlines = b"".join(b"\x00" + row for row in rows)
+    idat = zlib.compress(scanlines, level=9)
+    png = signature + _png_chunk(b"IHDR", ihdr) + _png_chunk(b"IDAT", idat) + _png_chunk(b"IEND", b"")
+    path.write_bytes(png)
+
+
+def _clamp(value: int, lower: int, upper: int) -> int:
+    return max(lower, min(value, upper))
+
+
+def _inside_rounded_rect(x: int, y: int, width: int, height: int, inset: int, radius: int) -> bool:
+    left = inset
+    top = inset
+    right = width - inset - 1
+    bottom = height - inset - 1
+    if left > right or top > bottom:
+        return False
+
+    corner_x = _clamp(x, left + radius, right - radius)
+    corner_y = _clamp(y, top + radius, bottom - radius)
+    dx = x - corner_x
+    dy = y - corner_y
+    return dx * dx + dy * dy <= radius * radius
+
+
+def _generate_color_icon(path: Path) -> None:
+    width = 192
+    height = 192
+    rows: list[bytes] = []
+    for y in range(height):
+        row = bytearray()
+        for x in range(width):
+            if not _inside_rounded_rect(x, y, width, height, inset=8, radius=36):
+                row.extend((0, 0, 0, 0))
+                continue
+
+            blue = 210 + (x * 20 // width)
+            green = 88 + (y * 32 // height)
+            red = 43 + ((x + y) * 14 // (width + height))
+
+            if (x - 96) ** 2 + (y - 82) ** 2 <= 34 ** 2:
+                row.extend((255, 255, 255, 255))
+            elif 68 <= x <= 124 and 108 <= y <= 124:
+                row.extend((255, 255, 255, 255))
+            elif (x - 96) ** 2 + (y - 126) ** 2 <= 14 ** 2:
+                row.extend((255, 255, 255, 255))
+            else:
+                row.extend((red, green, blue, 255))
+        rows.append(bytes(row))
+    _write_rgba_png(path, width, height, rows)
+
+
+def _generate_outline_icon(path: Path) -> None:
+    width = 32
+    height = 32
+    rows: list[bytes] = []
+    for y in range(height):
+        row = bytearray()
+        for x in range(width):
+            outer = _inside_rounded_rect(x, y, width, height, inset=1, radius=6)
+            inner = _inside_rounded_rect(x, y, width, height, inset=4, radius=4)
+            dot = (x - 16) ** 2 + (y - 12) ** 2 <= 4 ** 2
+            stem = 14 <= x <= 18 and 16 <= y <= 23
+            if (outer and not inner) or dot or stem:
+                row.extend((255, 255, 255, 255))
+            else:
+                row.extend((0, 0, 0, 0))
+        rows.append(bytes(row))
+    _write_rgba_png(path, width, height, rows)
+
+
+def _prepare_manifest_icons(target: Path, dry_run: bool) -> None:
+    if dry_run:
+        return
+
+    _generate_color_icon(target / COLOR_ICON_FILE_NAME)
+    _generate_outline_icon(target / OUTLINE_ICON_FILE_NAME)
+
+    for stale_name in ("boy.png", "color32x32.png"):
+        stale_path = target / stale_name
+        if stale_path.exists():
+            stale_path.unlink()
 
 
 def _persist_template_settings(
@@ -156,8 +260,8 @@ def _persist_template_settings(
     template_payload["id"] = package_id
     template_payload["version"] = version
     template_payload.setdefault("icons", {})
-    template_payload["icons"]["color"] = ICON_FILE_NAME
-    template_payload["icons"]["outline"] = ICON_FILE_NAME
+    template_payload["icons"]["color"] = COLOR_ICON_FILE_NAME
+    template_payload["icons"]["outline"] = OUTLINE_ICON_FILE_NAME
     if not dry_run:
         _write_json(repo_root() / "manifest-template.json", template_payload)
 
@@ -184,9 +288,23 @@ def _package_manifest_zip(payload: dict[str, object], dry_run: bool) -> list[str
     return package_members
 
 
+def _write_manifest_metadata_snapshot(
+    metadata: dict[str, object],
+    *,
+    dry_run: bool,
+) -> Path | None:
+    if not metadata:
+        return None
+    snapshot_path = manifest_dir() / "agent-blueprint.metadata.json"
+    if not dry_run:
+        _write_json(snapshot_path, metadata)
+    return snapshot_path
+
+
 def ensure_manifest_assets(
     config: dict[str, object],
     generated: dict[str, object],
+    metadata: dict[str, object],
     *,
     dry_run: bool,
 ) -> dict[str, object]:
@@ -210,22 +328,12 @@ def ensure_manifest_assets(
     if template_payload:
         _persist_template_settings(template_payload, package_id, next_version, dry_run)
 
-    icon_source = _resolve_icon_source(target)
-    if icon_source is None:
-        raise RuntimeError("Could not find an icon source for boy.png.")
+    _prepare_manifest_icons(target, dry_run)
 
-    icon_target = target / ICON_FILE_NAME
-    if not dry_run:
-        if icon_source.resolve() != icon_target.resolve():
-            shutil.copyfile(icon_source, icon_target)
-        for stale_name in ("color.png", "outline.png"):
-            stale_path = target / stale_name
-            if stale_path.exists():
-                stale_path.unlink()
-
-    blueprint_id = _resolve_blueprint_id(config, generated)
+    blueprint_id = _resolve_blueprint_id(config, generated, metadata)
     app_name = str(
         config.get("agentUserDisplayName")
+        or _read_nested(metadata, "agentProfile", "agentUserDisplayName")
         or payload.get("name", {}).get("full")
         or "Sample Agent"
     ).strip()
@@ -238,8 +346,11 @@ def ensure_manifest_assets(
         "A365_AGENT_FULL_DESCRIPTION",
         "AGENT_FULL_DESCRIPTION",
         default=(
-            f"{app_name} is a Python sample agent built with Agent Framework and the Microsoft Agent 365 SDK. "
-            "It demonstrates observability, notifications, MCP tool integration, and Microsoft 365 agent hosting patterns."
+            _read_nested(metadata, "agentProfile", "agentDescription")
+            or (
+                f"{app_name} is a Python sample agent built with Agent Framework and the Microsoft Agent 365 SDK. "
+                "It demonstrates observability, notifications, MCP tool integration, and Microsoft 365 agent hosting patterns."
+            )
         ),
     )
 
@@ -278,16 +389,29 @@ def ensure_manifest_assets(
             or "https://learn.microsoft.com/en-us/legal/ai-code-of-conduct"
         ).strip(),
     )
-    payload["icons"]["color"] = ICON_FILE_NAME
-    payload["icons"]["outline"] = ICON_FILE_NAME
+    payload["icons"]["color"] = COLOR_ICON_FILE_NAME
+    payload["icons"]["outline"] = OUTLINE_ICON_FILE_NAME
     payload["name"]["full"] = app_name
     payload["name"]["short"] = app_name[:30]
     payload["description"]["short"] = short_description
     payload["description"]["full"] = full_description
 
+    publisher_mpn_id = _env_or_value(
+        "A365_PUBLISHER_MPN_ID",
+        "PUBLISHER_MPN_ID",
+    )
+    if publisher_mpn_id.isdigit():
+        payload.setdefault("developer", {})
+        payload["developer"]["mpnId"] = publisher_mpn_id
+    else:
+        developer.pop("mpnId", None)
+
     web_application = payload.setdefault("webApplicationInfo", {})
     web_application["id"] = blueprint_id
-    web_application["resource"] = f"api://{blueprint_id}"
+    web_application["resource"] = (
+        _read_nested(metadata, "runtime", "webApplicationResource")
+        or f"api://{blueprint_id}"
+    )
 
     bots = payload.setdefault("bots", [])
     if bots:
@@ -330,14 +454,26 @@ def main() -> int:
 
     config = load_json(args.config)
     generated = load_json(generated_config_path())
+    metadata = _load_blueprint_metadata()
     
     # 步驟 4: 直接在本機產生 manifest 與 zip，避免 headless Linux 卡在互動式流程。
-    payload = ensure_manifest_assets(config, generated, dry_run=args.dry_run)
+    payload = ensure_manifest_assets(config, generated, metadata, dry_run=args.dry_run)
+    metadata_snapshot = _write_manifest_metadata_snapshot(metadata, dry_run=args.dry_run)
     package_members = _package_manifest_zip(payload, dry_run=args.dry_run)
 
     print_step(f"Manifest package ID prepared: {payload['id']}")
     print_step(f"Manifest version prepared: {payload['version']}")
-    print_step(f"Manifest icons unified to: {ICON_FILE_NAME}")
+    print_step(
+        f"Manifest icons prepared: {COLOR_ICON_FILE_NAME} (192x192), {OUTLINE_ICON_FILE_NAME} (32x32)"
+    )
+    if metadata:
+        print_step(
+            "Blueprint metadata loaded: "
+            f"status={_read_nested(metadata, 'validationStatus') or 'unknown'}, "
+            f"source={_read_nested(metadata, 'audit', 'source') or 'unknown'}"
+        )
+        if metadata_snapshot is not None:
+            print_step(f"Blueprint metadata snapshot prepared: {metadata_snapshot}")
     if args.dry_run:
         print_step(f"Dry run package members: {', '.join(package_members)}")
         print_step("Dry run completed. No files were written.")

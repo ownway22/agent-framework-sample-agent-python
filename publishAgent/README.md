@@ -207,6 +207,29 @@ Blueprint 相關檔案：
 
 - 如果環境中已設定 `AGENT_BLUEPRINT_ID`，腳本會先嘗試直接重用既有 blueprint，成功時會跳過耗時的 `a365 setup requirements` 與 `a365 setup all`
 
+### `agentBlueprintId` / `objectId` / `servicePrincipalObjectId` 的差異
+
+這三個欄位都和 blueprint 身分有關，但代表的是不同層級的物件：
+
+- `agentBlueprintId`
+  - 這通常是 App Registration 的 `Application (client) ID`
+  - 它最常拿來給外部系統引用，也是 manifest 綁定時最重要的 ID
+  - 在這個 repo 裡，第 5 步會把它寫進 `webApplicationInfo.id`、`bots[0].botId` 與 custom engine agent id
+- `agentBlueprintObjectId`
+  - 這是 Entra ID 裡 Application 物件本身的 `Object ID`
+  - 它代表「應用程式定義」這個目錄物件，偏向管理與查詢用途
+  - 你在 Entra / Graph / Azure CLI 查 App Registration 詳細資料時，常會看到這個值
+- `agentBlueprintServicePrincipalObjectId`
+  - 這是 Service Principal 的 `Object ID`
+  - 它代表這個應用在租戶內實際可被授權、指派權限、套用 consent 的企業應用實體
+  - 如果要追查租戶內的授權、角色指派、企業應用設定，通常會看這個值
+
+可以把它簡化理解成：
+
+- `agentBlueprintId` = 對外引用最常用的 client id
+- `agentBlueprintObjectId` = App Registration 定義本身的 object id
+- `agentBlueprintServicePrincipalObjectId` = 租戶內企業應用實體的 object id
+
 ### Blueprint 欄位對照表
 
 | 來源檔案 | 欄位名稱 | 用途 | 是否必要 |
@@ -289,6 +312,8 @@ uv run python publishAgent/05_publish-to-admin-center.py --dry-run
 
 - 更新 `manifest/manifest.json`
 - 更新 `manifest/agenticUserTemplateManifest.json`
+- 同步讀取 `agent-blueprint.metadata.json` 補齊 blueprint 身分與執行端點資訊
+- 在 `manifest/` 目錄輸出一份 `agent-blueprint.metadata.json` snapshot
 - 更新 `manifest-template.json`
 - 產生 `manifest/manifest.zip`
 
@@ -296,6 +321,7 @@ uv run python publishAgent/05_publish-to-admin-center.py --dry-run
 
 - 每次執行都會自動產生新的版本號
 - 每次執行都會自動產生新的 package/title ID
+- 如果根目錄存在 `agent-blueprint.metadata.json`，第 5 步會優先用它來對齊 blueprint id、resource 與 agent 顯示資訊
 - 這是為了降低 Admin Center 出現舊版本或已部署 title 衝突的機率
 
 ## 最常用的完整流程

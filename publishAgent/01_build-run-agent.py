@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
 import signal
 import subprocess
 import sys
@@ -24,7 +25,6 @@ from _common import (
 )
 
 
-# 步驟 1: 先整理命令列參數，讓後續流程清楚可控。
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Start the sample agent and Microsoft 365 Agents Playground locally."
@@ -49,20 +49,116 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-# 步驟 2: 統一關閉程序邏輯，避免遺留背景程序。
+def socket_inodes_for_port(port: int) -> set[str]:
+    target_port = f"{port:04X}"
+    inodes: set[str] = set()
+
+    for proc_net in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(proc_net, encoding="utf-8") as handle:
+                next(handle, None)
+                for line in handle:
+                    parts = line.split()
+                    if len(parts) < 10:
+                        continue
+
+                    local_address = parts[1]
+                    state = parts[3]
+                    inode = parts[9]
+                    _, local_port = local_address.split(":")
+
+                    if local_port == target_port and state == "0A":
+                        inodes.add(inode)
+        except FileNotFoundError:
+            continue
+
+    return inodes
+
+
+def pids_listening_on_port(port: int) -> set[int]:
+    inodes = socket_inodes_for_port(port)
+    if not inodes:
+        return set()
+
+    pids: set[int] = set()
+    current_pid = os.getpid()
+
+    for proc_dir in Path("/proc").iterdir():
+        if not proc_dir.name.isdigit():
+            continue
+
+        pid = int(proc_dir.name)
+        if pid == current_pid:
+            continue
+
+        fd_dir = proc_dir / "fd"
+        try:
+            for fd in fd_dir.iterdir():
+                try:
+                    target = os.readlink(fd)
+                except OSError:
+                    continue
+
+                if target.startswith("socket:[") and target[8:-1] in inodes:
+                    pids.add(pid)
+                    break
+        except OSError:
+            continue
+
+    return pids
+
+
+def release_port(port: int, *, timeout_seconds: int = 10) -> None:
+    if not is_port_open(port):
+        return
+
+    print_step(f"Releasing stale process on port {port}.")
+
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if not is_port_open(port):
+            return
+
+        for pid in pids_listening_on_port(port):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                continue
+
+        time.sleep(0.5)
+
+    for pid in pids_listening_on_port(port):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            continue
+
+    final_deadline = time.time() + 5
+    while time.time() < final_deadline:
+        if not is_port_open(port):
+            return
+        time.sleep(0.2)
+
+
 def terminate_process(process: subprocess.Popen[str] | None) -> None:
     if process is None or process.poll() is not None:
         return
 
-    process.terminate()
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+    except ProcessLookupError:
+        return
+
     try:
         process.wait(timeout=10)
     except subprocess.TimeoutExpired:
-        process.kill()
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            return
         process.wait(timeout=5)
 
 
-    # 步驟 3: 優先使用本機 Playground binary，不相容時再退回 npx。
 def start_playground(
     *,
     root: str,
@@ -123,17 +219,18 @@ def main() -> int:
     print_header("Step 1 - Build and run agent locally")
 
     try:
-        # 步驟 4: 先檢查必要工具與埠號，避免啟動後才發現衝突。
         require_command("uv", "https://docs.astral.sh/uv/getting-started/installation/")
         if not playground_binary.exists():
             return fail(f"Agents Playground binary not found: {playground_binary}")
         if not os.access(playground_binary, os.X_OK):
             return fail(f"Agents Playground binary is not executable: {playground_binary}")
 
+        release_port(args.agent_port)
         if is_port_open(args.agent_port):
             return fail(
-                f"Port {args.agent_port} is already in use. Free it before starting the local agent."
+                f"Port {args.agent_port} is still in use after cleanup. Free it before starting the local agent."
             )
+
         if not args.skip_playground and is_port_open(args.playground_port):
             return fail(
                 f"Port {args.playground_port} is already in use. Free it before starting Agents Playground."
@@ -142,8 +239,7 @@ def main() -> int:
         env = os.environ.copy()
         env["PORT"] = str(args.agent_port)
 
-        # 步驟 5: 啟動本機 Agent Host，並等待健康檢查成功。
-        print_step("Starting the local Agent 365 host on port 3978.")
+        print_step(f"Starting the local Agent 365 host on port {args.agent_port}.")
         host_process = subprocess.Popen(
             ["uv", "run", "python", "start_with_generic_host.py"],
             cwd=root,
@@ -155,6 +251,7 @@ def main() -> int:
         agent_health_url = f"http://localhost:{args.agent_port}/api/health"
         if not wait_for_http(agent_health_url, timeout_seconds=90):
             terminate_process(host_process)
+            release_port(args.agent_port)
             return fail(
                 f"Agent host did not become healthy at {agent_health_url}. Check .env and model credentials."
             )
@@ -162,9 +259,10 @@ def main() -> int:
         print_step(f"Agent host is healthy: {agent_health_url}")
 
         if not args.skip_playground:
-            # 步驟 6: Host 正常後再啟動 Playground，避免 UI 先連到壞掉端點。
             endpoint = f"http://localhost:{args.agent_port}/api/messages"
-            print_step("Starting Microsoft 365 Agents Playground on port 56150.")
+            print_step(
+                f"Starting Microsoft 365 Agents Playground on port {args.playground_port}."
+            )
             playground_process = start_playground(
                 root=str(root),
                 endpoint=endpoint,
@@ -176,6 +274,7 @@ def main() -> int:
             if not wait_for_http(playground_url, timeout_seconds=60):
                 terminate_process(playground_process)
                 terminate_process(host_process)
+                release_port(args.agent_port)
                 return fail(
                     f"Agents Playground did not become reachable at {playground_url}."
                 )
@@ -189,7 +288,6 @@ def main() -> int:
             print(f"- Playground UI: http://localhost:{args.playground_port}")
         print("Press Ctrl+C to stop both processes.")
 
-        # 步驟 7: 持續監看程序，只要任一程序異常結束就立刻回報。
         while True:
             if host_process.poll() is not None:
                 return fail("The local agent host exited unexpectedly.")
@@ -200,9 +298,9 @@ def main() -> int:
         print_step("Stopping local processes.")
         return 0
     finally:
-        # 步驟 8: 不論成功或失敗，都確保背景程序被清乾淨。
         terminate_process(playground_process)
         terminate_process(host_process)
+        release_port(args.agent_port)
 
 
 if __name__ == "__main__":
