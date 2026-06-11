@@ -1,45 +1,43 @@
-# Agent Framework Sample Agent - Python
+# Agent Framework 範例 Agent — Python
 
-This sample demonstrates how to build an agent using Agent Framework in Python with the Microsoft Agent 365 SDK. It covers:
+本範例示範如何在 Python 中，搭配 Microsoft Agent 365 SDK 使用 Agent Framework 來建構 agent。內容涵蓋：
 
-- **Observability**: End-to-end tracing, caching, and monitoring for agent applications
-- **Notifications**: Services and models for managing user notifications
-- **Tools**: Model Context Protocol tools for building advanced agent solutions
-- **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
+- **Observability（可觀測性）**：為 agent 應用程式提供端對端 tracing、caching 與監控
+- **Notifications（通知）**：用於管理使用者通知的服務與模型
+- **Tools（工具）**：透過 Model Context Protocol 工具建構進階的 agent 解決方案
+- **Hosting Patterns（託管模式）**：使用 Microsoft 365 Agents SDK 進行託管
 
-This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/microsoft/Agent365-python).
+本範例使用 [Microsoft Agent 365 SDK for Python](https://github.com/microsoft/Agent365-python)。
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+如需更完整的文件與指引，了解如何使用 Microsoft Agent 365 SDK 建構 agent（包含如何加入 tooling、observability 與 notifications），請參閱 [Microsoft Agent 365 開發者文件](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)。
 
-## Prerequisites
+## 先決條件 Prerequisites
 
 - Python 3.x
 - Microsoft Agent 365 SDK
-- Agent Framework (agent-framework-azure-ai)
-- Azure/OpenAI API credentials
+- Agent Framework（agent-framework-azure-ai）
+- Azure/OpenAI API 憑證
 
-## Working with User Identity
+## 使用使用者身分 Working with User Identity
 
-On every incoming message, the A365 platform populates `activity.from_property` with basic user
-information — always available with no API calls or token acquisition:
+每當有訊息傳入時，A365 平台都會在 `activity.from_property` 中填入基本的使用者資訊——這些資訊隨時可用，不需要任何 API 呼叫或取得 token：
 
-| Field | Description |
+| 欄位 | 說明 |
 |---|---|
-| `activity.from_property.id` | Channel-specific user ID (e.g., `29:1AbcXyz...` in Teams) |
-| `activity.from_property.name` | Display name as known to the channel |
-| `activity.from_property.aad_object_id` | Azure AD Object ID — use this to call Microsoft Graph |
+| `activity.from_property.id` | 通道專屬的使用者 ID（例如 Teams 中的 `29:1AbcXyz...`） |
+| `activity.from_property.name` | 通道所認得的顯示名稱 |
+| `activity.from_property.aad_object_id` | Azure AD Object ID——用於呼叫 Microsoft Graph |
 
-The sample logs these fields at the start of every message turn and injects the display name
-into the LLM system instructions for personalized responses.
+本範例會在每個訊息回合（turn）開始時記錄這些欄位，並將顯示名稱注入到 LLM 的 system instructions 中，以提供個人化的回應。
 
-## Handling Agent Install and Uninstall
+## 處理 Agent 的安裝與解除安裝 Handling Agent Install and Uninstall
 
-When a user installs (hires) or uninstalls (removes) the agent, the A365 platform sends an `InstallationUpdate` activity — also referred to as the `agentInstanceCreated` event. The sample handles this in `on_installation_update` in `host_agent_server.py`:
+當使用者安裝（hire，僱用）或解除安裝（remove，移除）agent 時，A365 平台會送出一個 `InstallationUpdate` activity——也稱為 `agentInstanceCreated` 事件。本範例在 `host_agent_server.py` 的 `on_installation_update` 中處理此事件：
 
-| Action | Description |
+| 動作 | 說明 |
 |---|---|
-| `add` | Agent was installed — send a welcome message |
-| `remove` | Agent was uninstalled — send a farewell message |
+| `add` | agent 已安裝——送出歡迎訊息 |
+| `remove` | agent 已解除安裝——送出道別訊息 |
 
 ```python
 if action == "add":
@@ -48,15 +46,15 @@ elif action == "remove":
     await context.send_activity("Thank you for your time, I enjoyed working with you.")
 ```
 
-To test with Agents Playground, use **Mock an Activity → Install application** to send a simulated `installationUpdate` activity.
+若要使用 Agents Playground 進行測試，請使用 **Mock an Activity → Install application** 來送出模擬的 `installationUpdate` activity。
 
-## Sending Multiple Messages in Teams
+## 在 Teams 中傳送多則訊息 Sending Multiple Messages in Teams
 
-Agent365 agents can send multiple discrete messages in response to a single user prompt in Teams. This is achieved by calling `send_activity` multiple times within a single turn.
+Agent365 agent 可以針對 Teams 中單一使用者提示（prompt），回應多則獨立的訊息。做法是在單一回合（turn）中多次呼叫 `send_activity`。
 
-> **Important**: Streaming responses are not supported for agentic identities in Teams. The SDK detects agentic identity and buffers the stream into a single message. Use `send_activity` directly to send immediate, discrete messages to the user.
+> **重要**：agentic identity 不支援串流（streaming）回應。SDK 偵測到 agentic identity 時，會將串流緩衝（buffer）成單一訊息。請直接使用 `send_activity` 向使用者送出即時且獨立的訊息。
 
-The sample demonstrates this in `on_message` ([host_agent_server.py](host_agent_server.py)):
+本範例在 `on_message`（[host_agent_server.py](host_agent_server.py)）中示範此做法：
 
 ```python
 # Message 1: immediate ack — reaches the user right away
@@ -87,47 +85,47 @@ finally:
         pass
 ```
 
-Each `send_activity` call produces a separate Teams message. You can call it as many times as needed to send progress updates, partial results, or a final answer.
+每一次呼叫 `send_activity` 都會產生一則獨立的 Teams 訊息。您可以視需要多次呼叫，以送出進度更新、部分結果或最終答案。
 
-### Typing Indicators
+### 輸入中指示器 Typing Indicators
 
-- Typing indicators show a "..." progress animation in Teams
-- They have a built-in ~5-second visual timeout and must be refreshed in a loop every ~4 seconds
-- Only visible in 1:1 chats and small group chats — not in channels
+- 輸入中指示器會在 Teams 顯示「...」進度動畫
+- 它內建約 5 秒的視覺逾時，必須在迴圈中每約 4 秒重新整理一次
+- 僅在一對一聊天與小型群組聊天中可見——在頻道（channel）中看不到
 
-## Running the Agent
+## 執行 Agent Running the Agent
 
-To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=python) guide for complete instructions.
+若要設定並測試此 agent，請參閱 [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=python) 指南，以取得完整說明。
 
-### Local Testing Setup For This Repo
+### 本機測試設定 Local Testing Setup For This Repo
 
-This sample is already wired to use `start_with_generic_host.py` as the local entry point:
+此範例已預先設定為使用 `start_with_generic_host.py` 作為本機進入點：
 
 ```bash
 uv run python start_with_generic_host.py
 ```
 
-Use this repo-specific flow to match the official guide:
+請依照下列專屬於此 repo 的流程，以對應官方指南：
 
-1. Install dependencies:
+1. 安裝相依套件：
 
 ```bash
 uv pip install -e .
 ```
 
-1. Create your local environment file:
+1. 建立您的本機環境檔案：
 
 ```bash
 cp .env.template .env
 ```
 
-1. Fill in Azure OpenAI settings in `.env`.
+1. 在 `.env` 中填入 Azure OpenAI 設定。
 
-This repo uses `AzureOpenAIChatClient`, so `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`, and `AZURE_OPENAI_API_VERSION` are required for a successful chat response.
+此 repo 使用 `AzureOpenAIChatClient`，因此要成功取得聊天回應，需要 `AZURE_OPENAI_API_KEY`、`AZURE_OPENAI_ENDPOINT`、`AZURE_OPENAI_DEPLOYMENT` 與 `AZURE_OPENAI_API_VERSION`。
 
-Set `AZURE_OPENAI_ENDPOINT` to the Azure OpenAI resource root, for example `https://your-resource.openai.azure.com/`. Do not append `/openai/v1`.
+請將 `AZURE_OPENAI_ENDPOINT` 設定為 Azure OpenAI 資源的根路徑，例如 `https://your-resource.openai.azure.com/`。請勿在後面附加 `/openai/v1`。
 
-1. For local development, prefer bearer-token testing first:
+1. 進行本機開發時，建議先以 bearer-token 方式測試：
 
 ```bash
 # keep these values for local testing
@@ -138,37 +136,37 @@ USE_AGENTIC_AUTH=false
 a365 develop get-token
 ```
 
-After `a365 develop get-token`, confirm that `.env` contains `BEARER_TOKEN=...`.
+執行 `a365 develop get-token` 後，請確認 `.env` 中已包含 `BEARER_TOKEN=...`。
 
-1. Start the agent server:
+1. 啟動 agent server：
 
 ```bash
 uv run python start_with_generic_host.py
 ```
 
-1. Start Agents Playground against the local endpoint:
+1. 針對本機端點啟動 Agents Playground：
 
 ```bash
 ./agentsplayground -e "http://localhost:3978/api/messages" -c "emulator"
 ```
 
-1. Validate the basic scenarios from the testing guide:
+1. 驗證測試指南中的基本情境：
 
-- Send `What can you do?` to confirm the agent responds.
-- Send `List all tools I have access to` after `BEARER_TOKEN` is populated.
-- Trigger an install event and confirm the welcome message appears.
+- 傳送 `What can you do?` 以確認 agent 有回應。
+- 在 `BEARER_TOKEN` 填入後，傳送 `List all tools I have access to`。
+- 觸發安裝（install）事件，並確認出現歡迎訊息。
 
-If you want to switch to agentic authentication later, set `USE_AGENTIC_AUTH=true`, set `AUTH_HANDLER_NAME=AGENTIC`, and populate the `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` values from `a365 config display -g`.
+若您之後想切換為 agentic authentication，請將 `USE_AGENTIC_AUTH=true`、`AUTH_HANDLER_NAME=AGENTIC`，並從 `a365 config display -g` 填入 `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` 的各項值。
 
-For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](AGENT-CODE-WALKTHROUGH.md).
+如需 agent 程式碼與實作的詳細說明，請參閱 [Agent Code Walkthrough](AGENT-CODE-WALKTHROUGH.md)。
 
-## Support
+## 支援 Support
 
-For issues, questions, or feedback:
+如有問題、疑問或意見回饋：
 
-- **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-python/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
-- **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
+- **Issues**：請於 [GitHub Issues](https://github.com/microsoft/Agent365-python/issues) 區段提出 issue
+- **Documentation**：請參閱 [Microsoft Agents 365 開發者文件](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Security**：如有安全性問題，請參閱 [SECURITY.md](SECURITY.md)
 
 ## Contributing
 
@@ -178,7 +176,7 @@ When you submit a pull request, a CLA bot will automatically determine whether y
 
 This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
 
-## Additional Resources
+## 其他資源 Additional Resources
 
 - [Microsoft Agent 365 SDK - Python repository](https://github.com/microsoft/Agent365-python)
 - [Microsoft 365 Agents SDK - Python repository](https://github.com/Microsoft/Agents-for-python)
