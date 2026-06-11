@@ -13,9 +13,6 @@
 ## 📑 目錄
 
 - [✨ 這個範例示範什麼?](#features)
-- [👤 使用使用者身分](#user-identity)
-- [🔌 安裝與解除安裝事件](#install-uninstall)
-- [💬 在 Teams 中傳送多則訊息](#teams-messages)
 - [⚠️ 執行前的重要須知](#important-notes)
 - [🗂️ 專案結構](#project-structure)
 - [🧭 執行順序](#execution-order)
@@ -42,87 +39,6 @@
 如需 agent 程式碼與實作的逐步說明，請參閱 [Agent Code Walkthrough](AGENT-CODE-WALKTHROUGH.md)。
 
 <a id="user-identity"></a>
-
-## 👤 使用使用者身分
-
-每當有訊息傳入時，A365 平台都會在 `activity.from_property` 中填入基本的使用者資訊——這些資訊隨時可用，不需要任何 API 呼叫或取得 token：
-
-| 欄位 | 說明 |
-|---|---|
-| `activity.from_property.id` | 通道專屬的使用者 ID（例如 Teams 中的 `29:1AbcXyz...`） |
-| `activity.from_property.name` | 通道所認得的顯示名稱 |
-| `activity.from_property.aad_object_id` | Azure AD Object ID——用於呼叫 Microsoft Graph |
-
-本範例會在每個訊息回合（turn）開始時記錄這些欄位，並將顯示名稱注入到 LLM 的 system instructions 中，以提供個人化的回應。
-
-<a id="install-uninstall"></a>
-
-## 🔌 安裝與解除安裝事件
-
-當使用者安裝（hire，僱用）或解除安裝（remove，移除）agent 時，A365 平台會送出一個 `InstallationUpdate` activity——也稱為 `agentInstanceCreated` 事件。本範例在 `host_agent_server.py` 的 `on_installation_update` 中處理此事件：
-
-| 動作 | 說明 |
-|---|---|
-| `add` | agent 已安裝——送出歡迎訊息 |
-| `remove` | agent 已解除安裝——送出道別訊息 |
-
-```python
-if action == "add":
-    await context.send_activity("Thank you for hiring me! Looking forward to assisting you in your professional journey!")
-elif action == "remove":
-    await context.send_activity("Thank you for your time, I enjoyed working with you.")
-```
-
-若要使用 Agents Playground 進行測試，請使用 **Mock an Activity → Install application** 來送出模擬的 `installationUpdate` activity。
-
-<a id="teams-messages"></a>
-
-## 💬 在 Teams 中傳送多則訊息
-
-Agent365 agent 可以針對 Teams 中單一使用者提示（prompt），回應多則獨立的訊息。做法是在單一回合（turn）中多次呼叫 `send_activity`。
-
-> **重要**：agentic identity 不支援串流（streaming）回應。SDK 偵測到 agentic identity 時，會將串流緩衝（buffer）成單一訊息。請直接使用 `send_activity` 向使用者送出即時且獨立的訊息。
-
-本範例在 `on_message`（[host_agent_server.py](host_agent_server.py)）中示範此做法：
-
-```python
-# Message 1: immediate ack — reaches the user right away
-await context.send_activity("Got it — working on it…")
-
-# Send typing indicator immediately (awaited so it arrives before the LLM call starts).
-await context.send_activity(Activity(type="typing"))
-
-# Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
-async def _typing_loop():
-    try:
-        while True:
-            await asyncio.sleep(4)
-            await context.send_activity(Activity(type="typing"))
-    except asyncio.CancelledError:
-        pass  # Expected on cancel.
-
-typing_task = asyncio.create_task(_typing_loop())
-try:
-    response = await agent.process_user_message(...)
-    # Message 2: the LLM response
-    await context.send_activity(response)
-finally:
-    typing_task.cancel()
-    try:
-        await typing_task
-    except asyncio.CancelledError:
-        pass
-```
-
-每一次呼叫 `send_activity` 都會產生一則獨立的 Teams 訊息。您可以視需要多次呼叫，以送出進度更新、部分結果或最終答案。
-
-**輸入中指示器 Typing Indicators：**
-
-- 輸入中指示器會在 Teams 顯示「...」進度動畫
-- 它內建約 5 秒的視覺逾時，必須在迴圈中每約 4 秒重新整理一次
-- 僅在一對一聊天與小型群組聊天中可見——在頻道（channel）中看不到
-
-<a id="important-notes"></a>
 
 ## ⚠️ 執行前的重要須知
 
